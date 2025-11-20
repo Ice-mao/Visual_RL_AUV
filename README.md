@@ -40,6 +40,12 @@ mujoco_py.cymj
 ```
 
 ## 💻 Code Usage
+If you would like to run DrM on [RL_AUV_tracking](https://github.com/Ice-mao/RL_AUV_tracking.git), please use train_auv.py to train DrM policies on different configs.
+
+```bash
+python train_auv.py task@_global_=auv agent@_global_=drm
+```
+
 If you would like to run DrM on [DeepMind Control Suite](https://github.com/google-deepmind/dm_control), please use train_dmc.py to train DrM policies on different configs.
 
 ```bash
