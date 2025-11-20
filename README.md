@@ -16,6 +16,8 @@ sudo apt install libosmesa6-dev libegl1-mesa libgl1-mesa-glx libglfw3
 conda env create -f conda_env.yml 
 conda activate drm
 pip3 install torch==1.12.1+cu116 torchvision==0.13.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+
+git clone https://github.com/Ice-mao/RL_AUV_tracking.git
 ```
 
 Next, install the additional dependencies required for MetaWorld and Adroit. 
