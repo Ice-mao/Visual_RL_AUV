@@ -7,86 +7,86 @@ import numpy as np
 from gym import spaces
 from typing import Any, NamedTuple
 from collections import deque
-class MetaWorld:
+
+import sys
+sys.path.append('/data/RL/DrM/RL_AUV_tracking')
+import RL_AUV_tracking.auv_env as auv_env
+from RL_AUV_tracking.config_loader import load_config
+
+class AuvEnv:
     def __init__(
         self,
-        name,
+        name='AUVTracking_v1',
+        config=None,
         seed=None,
         action_repeat=1,
-        size=(64, 64),
-        camera=None,
-    ):
-        import metaworld
-        from metaworld.envs import (
-            ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE,
-            ALL_V2_ENVIRONMENTS_GOAL_HIDDEN,
-        )
-
-        os.environ["MUJOCO_GL"] = "egl"
-
-        task = f"{name}-v2-goal-observable"
-        env_cls = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[task]
-        self._env = env_cls(seed=seed)
-        self._env._freeze_rand_vec = False
+        size = (64, 64)
+        ):
+        config_path = os.path.join('/data/RL/DrM/RL_AUV_tracking', 'configs','envs', f'{config}.yml')
+        config = load_config(config_path)
+        config['obs']['image'] = list(size)
+        
+        self._env = auv_env.make(name, 
+                        config=config,
+                        eval=False, t_steps=1000,
+                        show_viewport=False,
+                        )
+        
         self._size = size
         self._action_repeat = action_repeat
-
-        self._camera = camera
+        
+        if seed is not None:
+            np.random.seed(seed)
 
     @property
     def obs_space(self):
+        # AUV environment returns dict with images and state
         spaces = {
-            "image": gym.spaces.Box(0, 255, self._size + (3,), dtype=np.uint8),
+            "image": self._env.observation_space['image'],
             "reward": gym.spaces.Box(-np.inf, np.inf, (), dtype=np.float32),
             "is_first": gym.spaces.Box(0, 1, (), dtype=bool),
             "is_last": gym.spaces.Box(0, 1, (), dtype=bool),
             "is_terminal": gym.spaces.Box(0, 1, (), dtype=bool),
-            "state": self._env.observation_space,
+            "state": self._env.observation_space['state'],
             "success": gym.spaces.Box(0, 1, (), dtype=bool),
         }
         return spaces
 
     @property
     def act_space(self):
-        action = self._env.action_space
-        return {"action": action}
+        return {"action": self._env.action_space}
 
     def step(self, action):
         assert np.isfinite(action["action"]).all(), action["action"]
         reward = 0.0
         success = 0.0
+        info = {}
+        
         for _ in range(self._action_repeat):
-            state, rew, done, info = self._env.step(action["action"])
-            success += float(info["success"])
+            obs, rew, done, _, info = self._env.step(action["action"])
             reward += rew or 0.0
         success = min(success, 1.0)
         assert success in [0.0, 1.0]
         obs = {
             "reward": reward,
             "is_first": False,
-            "is_last": False,  # will be handled by timelimit wrapper
-            "is_terminal": False,  # will be handled by per_episode function
-            "image": self._env.sim.render(
-                *self._size, mode="offscreen", camera_name=self._camera
-            ),
-            "state": state,
+            "is_last": False,
+            "is_terminal": False,
+            "image": obs['image'],
+            "state": obs['state'],
             "success": success,
         }
         return obs
 
     def reset(self):
-        if self._camera == "corner2":
-            self._env.model.cam_pos[2][:] = [0.75, 0.075, 0.7]
-        state = self._env.reset()
+        obs, info = self._env.reset()
         obs = {
             "reward": 0.0,
             "is_first": True,
             "is_last": False,
             "is_terminal": False,
-            "image": self._env.sim.render(
-                *self._size, mode="offscreen", camera_name=self._camera
-            ),
-            "state": state,
+            "image": obs['image'],
+            "state": obs['state'],
             "success": False,
         }
         return obs
@@ -169,17 +169,17 @@ class ExtendedTimeStep(NamedTuple):
             return getattr(self, attr)
         else:
             return tuple.__getitem__(self, attr)
-class metaworld_wrapper():
+        
+class auv_wrapper():
     def __init__(self, env, nstack=3):
         self._env = env
-        self.nstack = 3
-        wos = env.obs_space['image']  # wrapped ob space
-        low = np.repeat(wos.low, self.nstack, axis=-1)
-        high = np.repeat(wos.high, self.nstack, axis=-1)
+        self.nstack = nstack
+        
+        wos = env.obs_space['image']
+        low = np.repeat(wos.low, self.nstack, axis=0)
+        high = np.repeat(wos.high, self.nstack, axis=0)
         self.stackedobs = np.zeros(low.shape, low.dtype)
-
-        self.observation_space = spaces.Box(low=np.transpose(low, (2, 0, 1)), high=np.transpose(high, (2, 0, 1)), dtype=np.uint8)
-
+        self.observation_space = spaces.Box(low=low, high=high, dtype=np.uint8)
 
     def observation_spec(self):
         return specs.BoundedArray(self.observation_space.shape,
@@ -197,21 +197,22 @@ class metaworld_wrapper():
 
     def reset(self):
         time_step = self._env.reset()
-        obs = time_step['image']
+        obs = time_step['image']  #(C, H, W)
         self.stackedobs[...] = 0
-        self.stackedobs[..., -obs.shape[-1]:] = obs
-        return ExtendedTimeStep(observation=np.transpose(self.stackedobs, (2, 0, 1)),
-                                 step_type=StepType.FIRST,
-                                 action=np.zeros(self.action_spec().shape, dtype=self.action_spec().dtype),
-                                 reward=0.0,
-                                 discount=1.0,
-                                success = time_step['success'])
+        self.stackedobs[-obs.shape[0]:, ...] = obs
+        return ExtendedTimeStep(observation=self.stackedobs,
+                                step_type=StepType.FIRST,
+                                action=np.zeros(self.action_spec().shape, dtype=self.action_spec().dtype),
+                                reward=0.0,
+                                discount=1.0,
+                                success=time_step['success'])
+
     def step(self, action):
         action = {'action':action}
         time_step = self._env.step(action)
-        obs = time_step['image']
-        self.stackedobs = np.roll(self.stackedobs, shift=-obs.shape[-1], axis=-1) #
-        self.stackedobs[..., -obs.shape[-1]:] = obs
+        obs = time_step['image']  #(C, H, W)
+        self.stackedobs = np.roll(self.stackedobs, shift=-obs.shape[0], axis=0)
+        self.stackedobs[-obs.shape[0]:, ...] = obs
 
         if time_step['is_first']:
             step_type = StepType.FIRST
@@ -219,21 +220,41 @@ class metaworld_wrapper():
             step_type = StepType.LAST
         else:
             step_type = StepType.MID
-        return ExtendedTimeStep(observation=np.transpose(self.stackedobs, (2, 0, 1)),
+        return ExtendedTimeStep(observation=self.stackedobs,
                                  step_type=step_type,
                                  action=action['action'],
                                  reward=time_step['reward'],
                                  discount=1.0,
-                                success = time_step['success'])
+                                 success=time_step['success'])
 
-def make(name, frame_stack, action_repeat, seed):
-    env = MetaWorld(name, seed,action_repeat, (84,84), 'corner2')
+
+def make(name, frame_stack, action_repeat, seed, config=None):
+    """
+    Create an AUV tracking environment compatible with DrM framework.
+    
+    Args:
+        name: Environment name (e.g., 'AUVTracking_v1')
+        frame_stack: Number of frames to stack
+        action_repeat: Number of times to repeat each action
+        seed: Random seed
+        config: Optional environment configuration
+    """
+    # Create AUV environment
+    env = AuvEnv(
+        name=name, 
+        seed=seed, 
+        action_repeat=action_repeat, 
+        size=(84, 84),
+        config=config
+    )
+    
+    # Apply wrappers
     env = NormalizeAction(env)
-    env = TimeLimit(env, 250)
-    env = metaworld_wrapper(env, frame_stack)
+    env = TimeLimit(env, 200)  # Standard episode length for AUV tracking
+    env = auv_wrapper(env, frame_stack)
 
     return env
 
 if __name__ == "__main__":
-    env = make('coffee-push', frame_stack=3, action_repeat=2, seed=42)
+    env = make('AUVTracking_v1', frame_stack=3, action_repeat=2, seed=42, config='v1_config')
     print("metaworld env created successfully!")

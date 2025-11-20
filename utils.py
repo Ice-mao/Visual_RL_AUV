@@ -206,3 +206,19 @@ def perturb(net, optimizer, perturb_factor):
             param.data = net.state_dict()[name]
     optimizer.state = defaultdict(dict)
     return net, optimizer
+
+if __name__ == "__main__":
+    # 示例网络结构
+    class SimpleNet(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = nn.Sequential(
+                nn.Linear(10, 64),    # name: "encoder.0"
+                nn.ReLU(),            # name: "encoder.1"  
+                nn.Linear(64, 32)     # name: "encoder.2"
+            )
+            self.classifier = nn.Linear(32, 5)  # name: "classifier"
+
+    net = SimpleNet()
+    for name, module in net.named_modules():
+        print(f"Name: '{name}', Module: {type(module).__name__}")

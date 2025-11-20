@@ -1,0 +1,11 @@
+defaults:
+  - hard
+  - _self_
+
+task_name: AUVTracking_v1
+config_name: v1_config
+lr: 8e-5
+feature_dim: 100
+agent:
+  max_perturb_factor: 0.6
+  target_lambda: 0.6
